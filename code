@@ -1,0 +1,148 @@
+#include <Encoder.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+//initialize pin
+const int encoderA = 2; //encoder
+const int encoderB = 3; //encoder
+const int motorPWM = 9; //PWM
+const int motorIn1 = 8; //motor controller
+const int motorIn2 = 7; //motor controller
+
+// const int potPin = A0;
+
+//initialize encoder and values
+Encoder ankleEncoder(encoderA,encoderB);
+const float pulsePR = 5281.1; //encoder pulse per revolution
+float ref = 0.0; //reference position
+float curr_angle = 0.0;
+
+//initialize angles as thresholds
+const float crit1 = 30.0; //critical angle 1 (lower)
+const float free1 = 50.0; //free movement
+const float defaultAngle = 60.0; //initial resting position
+const float free2 = 70.0; //free movement
+const float crit2 = 90.0; //critical angle 2 (upper)
+
+//LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+//runs once when power on
+void setup(){
+  Serial.begin(9600);
+
+  pinMode(motorPWM, OUTPUT);
+  pinMode(motorIn1, OUTPUT);
+  pinMode(motorIn2, OUTPUT);
+
+  ref = ankleEncoder.read(); //read reference position in pulse
+  // Serial.println("Test1");
+
+  setMotor(1, 50);
+  delay(200);
+  stopMotor();
+
+  setDefault(defaultAngle); //move to 60 degrees position
+  // Serial.println("Test2");
+
+  // lcd.init();
+  // lcd.backlight();
+  
+  // lcd.clear();
+  // lcd.print("Calibration Done");
+  
+}
+
+void loop(){
+  float curr_angle = getCurrAngle(); //get current angle
+  
+  Serial.print("Angle: ");
+  Serial.println(curr_angle); //print current angle
+
+  torque(); //apply force based on angle
+  delay(100);               
+}
+
+//convert pulse to angle
+float getCurrAngle(){
+  float curr_angle = ((ankleEncoder.read() - ref) * 360.0) / pulsePR;
+  if (curr_angle>=360.0){ //wrap around angles, can be taken out later
+    curr_angle = curr_angle-360.0;
+  }
+  if (curr_angle<-360.0){
+    curr_angle = curr_angle+360.0;
+  }
+  return curr_angle; //angle between -360 and 360 degrees
+}
+//applied force based on angle
+void torque(){
+  float curr_angle = getCurrAngle(); //get current angle
+  float error = 0; //value error
+  
+  if(curr_angle<crit1){ //if current angle less than critical angle 1
+    error = crit1-curr_angle; //calculate error
+  } else if (curr_angle>crit2){ //if current angle more than critical angle 2
+    error = curr_angle-crit2; //calculate error
+  } else{ //free-move
+    stopMotor();
+    return;
+  }
+  //mapping error to force
+  float force = error * error;
+  if (force > 0.25){
+    force = 0.25;
+  }
+  
+  //apply force in the direction
+  if (curr_angle < defaultAngle){
+    setMotor(-1, force * 255); //negative direction
+  }
+  else{ //curr_angle >= defaultAngle
+    setMotor(1, force * 255); //positive direction
+  }
+}
+
+//move to initial default angle
+void setDefault(float initial){
+  Serial.println("begin calibration");
+  float curr_angle = getCurrAngle(); //get current angle
+  Serial.println(curr_angle);
+
+  while(abs(curr_angle-initial)>1){
+
+    if(curr_angle>initial){
+      setMotor(1, 150);
+    } else{ //curr_angle surpass default
+      setMotor(-1, 150);
+    }
+    delay(50);
+    curr_angle = getCurrAngle(); //update current angle
+    Serial.println(curr_angle);
+  }
+  
+  stopMotor();
+  return;
+}
+
+//set motor direction and speed
+void setMotor(int dir, int pwmVal){
+  if(dir == 1){ //spin forwards
+    digitalWrite(motorIn1,HIGH);
+    digitalWrite(motorIn2,LOW);
+  }
+  else if(dir == -1){ //spin backwards
+    digitalWrite(motorIn1,LOW);
+    digitalWrite(motorIn2,HIGH);
+  }
+  else{ //free-move, power off
+    digitalWrite(motorIn1,LOW);
+    digitalWrite(motorIn2,LOW);
+  }  
+  analogWrite(motorPWM,pwmVal); //update motor speed
+}
+
+//stop motor, allow free movement
+void stopMotor(){ 
+  digitalWrite(motorIn1, LOW);
+  digitalWrite(motorIn2, LOW);
+  analogWrite(motorPWM, 0); //power off
+}
